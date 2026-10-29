@@ -1,0 +1,53 @@
+spring:
+  application:
+    name: spring-boot-saas-starter
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER:saas_app}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 5000
+      connection-init-sql: SET statement_timeout = '10s'
+  flyway:
+    enabled: ${MIGRATIONS_ENABLED:true}
+    url: ${DB_URL}
+    user: ${MIGRATION_USER:saas_migrator}
+    password: ${MIGRATION_PASSWORD:}
+    default-schema: public
+    clean-disabled: true
+  mvc:
+    problemdetails:
+      enabled: true
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+server:
+  shutdown: graceful
+  max-http-request-header-size: 16KB
+  forward-headers-strategy: none
+  error:
+    include-message: never
+    include-stacktrace: never
+  tomcat:
+    max-http-form-post-size: 16KB
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+app:
+  security:
+    issuer: ${OIDC_ISSUER}
+    jwk-set-uri: ${OIDC_JWK_SET_URI}
+    audience: ${OIDC_AUDIENCE:saas-api}

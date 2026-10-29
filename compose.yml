@@ -1,0 +1,57 @@
+name: spring-boot-saas-starter
+services:
+  db:
+    image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    environment:
+      POSTGRES_DB: saas
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/init-env.sh first}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?Run scripts/init-env.sh first}
+      MIGRATION_DB_PASSWORD: ${MIGRATION_PASSWORD:?Run scripts/init-env.sh first}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d saas"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    security_opt: ["no-new-privileges:true"]
+  identity:
+    image: quay.io/keycloak/keycloak:26.7.3@sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Run scripts/init-env.sh first}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:?Run scripts/init-env.sh first}
+      KC_HOSTNAME: http://localhost:8081
+      KC_HEALTH_ENABLED: "true"
+    ports: ["127.0.0.1:8081:8080"]
+    volumes:
+      - ./infra/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+    security_opt: ["no-new-privileges:true"]
+  app:
+    build: .
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/saas
+      DB_PASSWORD: ${DB_PASSWORD:?Run scripts/init-env.sh first}
+      MIGRATION_PASSWORD: ${MIGRATION_PASSWORD:?Run scripts/init-env.sh first}
+      OIDC_ISSUER: http://localhost:8081/realms/saas
+      OIDC_JWK_SET_URI: http://identity:8080/realms/saas/protocol/openid-connect/certs
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 30
+volumes:
+  postgres-data:

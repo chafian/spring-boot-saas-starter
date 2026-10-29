@@ -1,0 +1,18 @@
+name: Bug report
+description: Report a reproducible defect using fictional data.
+body:
+  - type: markdown
+    attributes:
+      value: For exploitable security issues, follow SECURITY.md instead of this public form.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction and expected behavior
+      description: Include version/commit, commands, and observed behavior. Remove secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Java, Docker, operating system, and database versions.
