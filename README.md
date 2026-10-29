@@ -64,6 +64,7 @@ no global Maven installation is needed.
 
 ```sh
 ./mvnw verify
+python3 -m unittest discover -s scripts -p 'test_*.py'
 ./mvnw spotless:apply
 ```
 
@@ -72,6 +73,9 @@ Testcontainer, packages the app, and writes coverage to
 `target/site/jacoco/index.html`. Docker is required; the tests do not silently
 skip when Docker is unavailable. CI runs verification and the Compose smoke
 example. Test reports are in `target/surefire-reports/`.
+
+The Python tests check that the smoke script retries transient startup
+connection failures and reports an error if readiness never succeeds.
 
 To run the app from your IDE or Maven against local infrastructure:
 
