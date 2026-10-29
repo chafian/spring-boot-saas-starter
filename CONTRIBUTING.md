@@ -16,6 +16,12 @@ validation. Keep secrets, private company code, customer data, real credentials,
 and internal domains out of contributions. Examples use fictional identities.
 Contributions are provided under this repository's MIT license.
 
+Dependabot checks weekly and groups minor/patch version updates into one PR per
+ecosystem: Maven, Docker, and GitHub Actions. Major upgrades remain separate for
+compatibility review. Each ecosystem permits at most two open version-update
+PRs. These grouping and queue rules do not delay or disable security updates.
+Dependency updates still require review and passing CI; they do not auto-merge.
+
 For security concerns, follow [SECURITY.md](SECURITY.md) instead of opening a
 public issue. Treat contributors respectfully, discuss code rather than people,
 and keep reviews constructive.
