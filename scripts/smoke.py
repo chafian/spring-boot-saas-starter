@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the local issuer and API; never prints passwords or bearer tokens."""
 import json
-import http.client
 import os
 from pathlib import Path
 import time
@@ -36,7 +35,7 @@ def wait_ready(url):
         try:
             request("GET", url)
             return
-        except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError, RuntimeError):
+        except (urllib.error.URLError, ConnectionError, TimeoutError, RuntimeError):
             time.sleep(2)
     raise RuntimeError(f"Service did not become ready: {url}")
 

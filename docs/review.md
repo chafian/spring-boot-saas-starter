@@ -51,6 +51,12 @@ The test-guard pass found no internal mocks or redundant framework-only tests;
 variants share parameterized tests. The docs-guard pass checked the routes,
 configuration, commands, and local example against the implementation.
 
+The first hosted Compose run exposed a connection-reset race while Spring was
+starting. Readiness polling now retries connection failures within its existing
+bounded wait. Two Python regression tests cover recovery and persistent failure;
+CI runs them alongside the Java suite. Business requests are not automatically
+retried.
+
 ## Deliberate boundaries
 
 - `tenants` and `memberships` are a global control plane protected by service
