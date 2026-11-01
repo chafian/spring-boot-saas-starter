@@ -86,6 +86,38 @@ service. See [operations](docs/operations.md).
 
 ### Quick-start troubleshooting
 
+#### Waiting for Keycloak and the API
+
+Startup time varies with image downloads, the Java build, and available CPU and
+memory. Keycloak also imports the demo realm during startup. There is no fixed
+first-boot duration; check readiness rather than waiting a guessed number of seconds.
+
+After `docker compose up --build -d`, inspect the services:
+
+```sh
+docker compose ps -a
+docker compose logs --tail=100 identity app db
+```
+
+A running `identity` container does not yet prove that the realm is ready.
+Likewise, API readiness checks the application and database, not Keycloak.
+For the default Compose ports, open both URLs in your browser:
+
+- <http://localhost:8080/actuator/health/readiness> should return `{"status":"UP"}`.
+- <http://localhost:8081/realms/saas/.well-known/openid-configuration> should
+  return JSON with `issuer` set to `http://localhost:8081/realms/saas`.
+
+`python3 scripts/smoke.py` waits for these endpoints in that order before trying
+login. For each endpoint, it makes up to 90 attempts, sleeping two seconds after
+each failed attempt; individual requests have a ten-second timeout. This is a
+retry budget, not an expected startup time or a strict three-minute deadline.
+
+If it reports `Service did not become ready:`, check the URL in the error and
+the service logs above. If startup is still progressing, let it finish and rerun
+the smoke script. If a container exited or logs show an error, resolve that
+failure first. Successful endpoint checks alone do not test login; the smoke
+script's final PASS line confirms the complete example worked.
+
 | Symptom | What to do |
 | --- | --- |
 | `.env already exists; refusing to replace credentials.` | Reuse the existing file and continue with Compose. The setup script deliberately preserves credentials. |

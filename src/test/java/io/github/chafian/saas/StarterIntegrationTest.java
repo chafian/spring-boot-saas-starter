@@ -23,11 +23,14 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -324,6 +327,153 @@ class StarterIntegrationTest {
       start.countDown();
       assertThat(List.of(attempts.get(0).get(), attempts.get(1).get()))
           .containsExactlyInAnyOrder(200, 409);
+    }
+  }
+
+  @Test
+  @Timeout(90)
+  void concurrentRequestsKeepProjectsAndAuditIsolatedAcrossTenants() throws Exception {
+    String secondOwner = "owner-" + UUID.randomUUID();
+    String secondToken = token(secondOwner, "valid");
+    String secondTenant =
+        call("POST", "/api/v1/tenants", secondToken, Map.of("name", "Second"), 201)
+            .get("id")
+            .asText();
+    var tenantIds = List.of(tenant.toString(), secondTenant);
+    var subjects = List.of(owner, secondOwner);
+    var tokens = List.of(ownerToken, secondToken);
+    var seeds = new ArrayList<JsonNode>();
+    for (int i = 0; i < 2; i++) {
+      seeds.add(
+          call(
+              "POST",
+              "/api/v1/tenants/" + tenantIds.get(i) + "/projects",
+              tokens.get(i),
+              Map.of("name", "Seed " + i, "description", ""),
+              201));
+    }
+
+    // More clients than the two-connection pool; each client switches tenants between rounds.
+    var ready = new CountDownLatch(8);
+    var start = new CountDownLatch(1);
+    var expectedProjects = new ArrayList<>(seeds);
+    var executor = Executors.newVirtualThreadPerTaskExecutor();
+    try {
+      var attempts =
+          java.util.stream.IntStream.range(0, 8)
+              .mapToObj(
+                  worker ->
+                      executor.submit(
+                          () -> {
+                            ready.countDown();
+                            assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
+                            var updatedProjects = new ArrayList<JsonNode>();
+                            for (int round = 0; round < 3; round++) {
+                              int own = (worker + round) % 2;
+                              int other = 1 - own;
+                              String root = "/api/v1/tenants/" + tenantIds.get(own);
+                              String foreignRoot = "/api/v1/tenants/" + tenantIds.get(other);
+                              String jwt = tokens.get(own);
+                              String name = "Client " + worker + " round " + round;
+                              JsonNode created =
+                                  call(
+                                      "POST",
+                                      root + "/projects",
+                                      jwt,
+                                      Map.of("name", name, "description", ""),
+                                      201);
+                              String url = root + "/projects/" + created.get("id").asText();
+                              JsonNode updated =
+                                  call(
+                                      "PUT",
+                                      url,
+                                      jwt,
+                                      Map.of(
+                                          "name",
+                                          name + " updated",
+                                          "description",
+                                          "",
+                                          "version",
+                                          0),
+                                      200);
+                              assertThat(updated.get("tenantId").asText())
+                                  .isEqualTo(tenantIds.get(own));
+                              assertThat(updated.get("version").asInt()).isEqualTo(1);
+                              assertThat(call("GET", url, jwt, null, 200)).isEqualTo(updated);
+                              updatedProjects.add(updated);
+
+                              for (JsonNode project :
+                                  call("GET", root + "/projects?limit=100", jwt, null, 200)) {
+                                assertThat(project.get("tenantId").asText())
+                                    .isEqualTo(tenantIds.get(own));
+                              }
+                              for (JsonNode event :
+                                  call("GET", root + "/audit-events?limit=100", jwt, null, 200)) {
+                                assertThat(event.get("actor").asText())
+                                    .isEqualTo(subjects.get(own));
+                              }
+                              call("GET", foreignRoot + "/projects", jwt, null, 404);
+                              call("GET", foreignRoot + "/audit-events", jwt, null, 404);
+                              call(
+                                  "POST",
+                                  foreignRoot + "/projects",
+                                  jwt,
+                                  Map.of("name", "Forbidden", "description", ""),
+                                  404);
+                              // Probe both a foreign tenant path and a foreign ID under the
+                              // authorized tenant.
+                              for (String targetRoot : List.of(root, foreignRoot)) {
+                                String target =
+                                    targetRoot + "/projects/" + seeds.get(other).get("id").asText();
+                                call("GET", target, jwt, null, 404);
+                                call(
+                                    "PUT",
+                                    target,
+                                    jwt,
+                                    Map.of("name", "Forbidden", "description", "", "version", 0),
+                                    404);
+                                call("DELETE", target + "?version=0", jwt, null, 404);
+                              }
+                            }
+                            return updatedProjects;
+                          }))
+              .toList();
+      assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      for (var attempt : attempts) {
+        expectedProjects.addAll(attempt.get(60, TimeUnit.SECONDS));
+      }
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+
+    for (int i = 0; i < 2; i++) {
+      String id = tenantIds.get(i);
+      String root = "/api/v1/tenants/" + id;
+      var expected =
+          expectedProjects.stream()
+              .filter(project -> project.get("tenantId").asText().equals(id))
+              .toList();
+      assertThat(expected).hasSize(13);
+      JsonNode actual = call("GET", root + "/projects?limit=100", tokens.get(i), null, 200);
+      assertThat((Iterable<JsonNode>) actual).containsExactlyInAnyOrderElementsOf(expected);
+      var expectedEvents = new ArrayList<String>();
+      expectedEvents.add("TENANT_CREATED:" + id);
+      for (JsonNode project : expected) {
+        expectedEvents.add("PROJECT_CREATED:" + project.get("id").asText());
+        if (project.get("version").asInt() == 1) {
+          expectedEvents.add("PROJECT_UPDATED:" + project.get("id").asText());
+        }
+      }
+      JsonNode events = call("GET", root + "/audit-events?limit=100", tokens.get(i), null, 200);
+      assertThat((Iterable<JsonNode>) events)
+          .extracting(event -> event.get("actor").asText())
+          .containsOnly(subjects.get(i));
+      assertThat((Iterable<JsonNode>) events)
+          .extracting(
+              event -> event.get("action").asText() + ":" + event.get("resourceId").asText())
+          .containsExactlyInAnyOrderElementsOf(expectedEvents);
     }
   }
 
